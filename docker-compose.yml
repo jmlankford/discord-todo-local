@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   taskbot:
-    build: ./server
+    image: ghcr.io/jmlankford/discord-todo-local:latest
     container_name: taskbot
     restart: unless-stopped
     ports:
