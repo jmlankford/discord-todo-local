@@ -1,0 +1,7 @@
+v1 — Original release
+- Basic Discord thread reading
+- Daily 8:35 PM ET auto-refresh
+- Manual refresh button
+- Draggable yellow post-it widget
+- Always-on-top
+- Settings: thread name, filter user

@@ -1,0 +1,53 @@
+Discord To-Do Widget — v2
+=========================
+Built from v1 with four new feature groups.
+
+NEW IN v2
+---------
+1. Appearance customization (Settings > APPEARANCE section)
+   - Background color: color picker + hex input, live swatch preview
+   - Font color: same picker/hex input
+   - Font size: spinbox 8–24 pt
+   - Font style: Bold and/or Italic checkboxes
+   - "Save & Apply" recolors the live widget instantly without restart
+   - Title bar and bottom bar colors auto-derived from background via darken()
+
+2. Timed minimize (– button in title bar)
+   - Presets: 15 minutes, 1 hour, 2 hours
+   - "Until next refresh at 8:35 PM ET" — calculates exact ms remaining
+   - Custom HH:MM spinboxes with validation:
+       * Minimum: 1 minute
+       * Maximum: 23 hours 59 minutes
+   - Uses root.withdraw() + root.after(ms) so the taskbar is clear
+   - Cancels any in-flight timer if minimize is triggered again
+
+3. Resizable window
+   - ◢ drag grip in bottom-right corner of the bottom bar
+   - Enforces minimum size: 200 × 200 px
+   - Drag anywhere on the ◢ label to resize freely
+
+4. Responsive text wrapping
+   - _wrap_width() reads live canvas pixel width on every draw
+   - _on_canvas_resize() bound to canvas <Configure> event
+   - Text reflows automatically as the window is resized
+
+UNCHANGED FROM v1
+-----------------
+- Discord API integration (active + archived thread search)
+- Filter by username (filter_user config key)
+- Daily auto-refresh at 8:35 PM Eastern via APScheduler CronTrigger
+- Manual ↻ Refresh button
+- Setup screen for first-run config
+- Settings > DISCORD section (thread name, filter user)
+- Drag-to-move via title bar
+- Scrollable task list with mousewheel support
+- Always-on-top, frameless window
+- config.json stored next to exe (sys.frozen-aware path)
+- PyInstaller build via build.bat
+
+FILES
+-----
+discord_todo.py  — full source (this version)
+NOTES.txt        — this file
+
+To rebuild the exe after v2 changes, run build.bat from the project root.

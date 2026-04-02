@@ -1,0 +1,31 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+server/.env
+app/config.json
+
+# ── State / runtime data ──────────────────────────────────────────────────────
+data/
+task_state.json
+**/task_state.json
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ── PyInstaller (app/) ────────────────────────────────────────────────────────
+app/build/
+app/dist*/
+app/windows/
+app/mac/.venv/
+*.exe
+*.zip
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

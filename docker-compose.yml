@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  taskbot:
+    build: ./server
+    container_name: taskbot
+    restart: unless-stopped
+    ports:
+      - "8080:8080"          # Change the left side if 8080 is taken on your server
+    volumes:
+      - /mnt/user/appdata/taskbot/data:/data   # Adjust left side to your Unraid appdata path
+    environment:
+      # ── Discord ─────────────────────────────────────────────────────────────
+      DISCORD_TOKEN: "YOUR_DISCORD_BOT_TOKEN_HERE"
+      GUILD_ID: "YOUR_DISCORD_GUILD_ID_HERE"
+      CHANNEL_ID: "YOUR_DISCORD_CHANNEL_ID_HERE"
+
+      # ── Twilio (core) ────────────────────────────────────────────────────────
+      TWILIO_SID: "YOUR_TWILIO_ACCOUNT_SID_HERE"         # Starts with AC
+      TWILIO_AUTH: "YOUR_TWILIO_AUTH_TOKEN_HERE"
+      TWILIO_FROM: "YOUR_TWILIO_PHONE_NUMBER_HERE"        # E.164 e.g. +17165550000
+
+      # ── Twilio (API key — used for outbound calls) ───────────────────────────
+      TWILIO_API_KEY: "YOUR_TWILIO_API_KEY_SID_HERE"      # Starts with SK
+      TWILIO_API_SECRET: "YOUR_TWILIO_API_SECRET_HERE"
+
+      # ── Bloom & Rose voice routing ───────────────────────────────────────────
+      FORWARD_NUMBER: "YOUR_REAL_FORWARDING_NUMBER_HERE"  # E.164 e.g. +17165550001
+
+      # ── User phones (E.164 format) ───────────────────────────────────────────
+      PHONE_JOSH: "YOUR_JOSH_PHONE_NUMBER_HERE"
+      PHONE_JB: "YOUR_JB_PHONE_NUMBER_HERE"
+      PHONE_ZACH: "YOUR_ZACH_PHONE_NUMBER_HERE"
+
+      # ── Optional: protect /sms/send and /sms/alert endpoints ─────────────────
+      SMS_SECRET: "YOUR_CHOSEN_SECRET_KEY_HERE"
+
+      # ── Server ───────────────────────────────────────────────────────────────
+      BASE_URL: "https://switchboard.thebloomandrose.com"  # Your public subdomain
+      PORT: "8080"
+      STATE_FILE: "/data/task_state.json"
+      MFA_CODE_FILE: "/data/wave_mfa_code.txt"
+      TZ: "America/New_York"

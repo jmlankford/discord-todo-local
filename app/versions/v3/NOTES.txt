@@ -1,0 +1,46 @@
+Discord To-Do Widget — v3
+=========================
+
+New in v3
+---------
+1. Task checkboxes
+   - Each task row now has a checkbox on the left.
+   - A "Completed?" header checkbox at the top acts as a select-all toggle.
+   - Checking/unchecking the header immediately sets all task checkboxes.
+
+2. "✓ Tasks Completed" button
+   - Added to the bottom bar (right side, before the ↻ button).
+   - Clicking it collects all checked tasks and runs the completion flow.
+   - Button is disabled during the API call and re-enabled when done.
+   - Status bar shows "Completing N task(s)…" then "✓ Completed N" (with error count if any).
+
+3. Completion flow (per checked task)
+   a. DELETE the task message from the Discord thread
+      → DELETE /channels/{thread_id}/messages/{message_id}  → expects 204
+   b. POST a completion message as taskbot
+      → POST /channels/{thread_id}/messages
+      → body: {"content": "✅ **{thread_name}** completed: **{task_content}**"}
+   - Both operations run in a background thread so the UI stays responsive.
+   - After completion, the widget auto-refreshes the task list.
+
+4. Thread ID caching
+   - self._thread_id is stored after the first successful fetch.
+   - _complete_tasks() reuses the cached ID; falls back to _find_thread() if empty.
+
+Bot requirements
+----------------
+- Same bot token used for all operations (read, delete, post).
+- Bot MUST have "Manage Messages" permission in the channel to delete messages
+  posted by other users.
+- Completion messages posted by taskbot are auto-filtered from the task list
+  because filter_user == "taskbot" (or whatever you set).
+
+Checkbox styling
+----------------
+- selectcolor set to darken(bg, 0.88) so the tick box blends with the background.
+- _wrap_width() changed from w - 46 to w - 50 to account for the checkbox column.
+
+Build
+-----
+Run build.bat from the discord_todo folder.
+Output: dist/DiscordToDo.exe

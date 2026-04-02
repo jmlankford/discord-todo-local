@@ -1,0 +1,7 @@
+{
+  "token": "YOUR_DISCORD_BOT_TOKEN",
+  "guild_id": "YOUR_GUILD_ID",
+  "channel_id": "YOUR_CHANNEL_ID",
+  "thread_name": "YourThreadName",
+  "filter_user": "taskbot"
+}
