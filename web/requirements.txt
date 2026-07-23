@@ -1,0 +1,8 @@
+# Web UI service. Kept intentionally small — no heavy framework.
+# twilio/pytz are pulled in only because we import the shared server modules
+# (taskbot.py imports them at module load); the web service never sends SMS.
+flask>=3.0.0
+waitress>=3.0.0
+requests>=2.31.0
+pytz>=2024.1
+twilio>=9.0.0

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskBot · Lists</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <h1>TaskBot</h1>
+    <form method="post" action="{{ url_for('logout') }}">
+      <button class="link" type="submit">Sign out</button>
+    </form>
+  </header>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flashes">
+        {% for category, msg in messages %}
+          <p class="banner {{ category }}">{{ msg }}</p>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% if load_error %}
+    <p class="banner error">Couldn't load lists from Discord: {{ load_error }}</p>
+  {% endif %}
+
+  <main>
+    {% for user in users %}
+      {% set info = (lists or {}).get(user) %}
+      <section class="card">
+        <h2>{{ user }}</h2>
+
+        {% if info and info.error %}
+          <p class="banner error">Error reading {{ user }}'s thread: {{ info.error }}</p>
+        {% endif %}
+
+        {% if info and info.tasks %}
+          <ol class="tasks">
+            {% for task in info.tasks %}
+              <li>
+                <span class="task-text">{{ task }}</span>
+                <form method="post" action="{{ url_for('delete_task') }}"
+                      class="delete-form"
+                      onsubmit="return confirm('Delete this task for {{ user }}?\n\n{{ task|e }}');">
+                  <input type="hidden" name="user" value="{{ user }}">
+                  <input type="hidden" name="text" value="{{ task }}">
+                  <button type="submit" class="del" aria-label="Delete task">✕</button>
+                </form>
+              </li>
+            {% endfor %}
+          </ol>
+        {% elif info and not info.error %}
+          <p class="empty">No tasks. 🎉</p>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('add_task') }}" class="add-form">
+          <input type="hidden" name="user" value="{{ user }}">
+          <input type="text" name="text" placeholder="Add a task for {{ user }}…"
+                 aria-label="New task for {{ user }}" maxlength="500" required>
+          <button type="submit">Add</button>
+        </form>
+      </section>
+    {% endfor %}
+  </main>
+
+  <footer class="foot">
+    Numbering matches the daily SMS digest. Discord is the source of truth.
+  </footer>
+</body>
+</html>

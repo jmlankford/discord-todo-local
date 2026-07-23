@@ -41,3 +41,26 @@ services:
       STATE_FILE: "/data/task_state.json"
       MFA_CODE_FILE: "/data/wave_mfa_code.txt"
       TZ: "America/New_York"
+
+  # ── Web UI for managing the task lists (tasks.lankamerica.com) ───────────────
+  # Separate container, same stack. Reuses the same Discord credentials.
+  # Reads /data read-only so its task numbering matches the digest's blocklist.
+  taskbot-web:
+    image: ghcr.io/jmlankford/discord-todo-local-web:latest
+    container_name: taskbot-web
+    restart: unless-stopped
+    ports:
+      - "8091:8080"          # 8080/8081 = lank-survey-ape, 8090 = taskbot; 8091 is free
+    volumes:
+      - /mnt/user/appdata/taskbot/data:/data:ro   # read-only: web never writes state
+    environment:
+      # Reuse the SAME Discord values already set on the taskbot service above.
+      DISCORD_TOKEN: "YOUR_DISCORD_BOT_TOKEN_HERE"
+      GUILD_ID: "YOUR_DISCORD_GUILD_ID_HERE"
+      CHANNEL_ID: "YOUR_DISCORD_CHANNEL_ID_HERE"
+      # Web-only secrets — set these in the Portainer stack env, not in the repo.
+      APP_PASSWORD: "SET_IN_PORTAINER_ENV"        # shared login password
+      SESSION_SECRET: "SET_IN_PORTAINER_ENV"      # random, e.g. `openssl rand -hex 32`
+      PORT: "8080"
+      STATE_FILE: "/data/task_state.json"
+      TZ: "America/New_York"

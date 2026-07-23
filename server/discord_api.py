@@ -61,6 +61,24 @@ def discord_delete(channel_id: str, message_id: str) -> None:
         print(f"  [warn] Could not delete message {message_id}: {e}")
 
 
+def delete_message_checked(channel_id: str, message_id: str) -> int:
+    """
+    Like discord_delete but RETURNS the HTTP status so the caller can react
+    (e.g. surface a 403 = missing Manage Messages instead of hiding it).
+    Returns 0 on a transport-level failure. Additive helper — discord_delete
+    and the taskbot service behaviour are unchanged.
+    """
+    try:
+        r = requests.delete(
+            f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
+            headers=_headers(),
+        )
+        return r.status_code
+    except Exception as e:
+        print(f"  [warn] Could not delete message {message_id}: {e}")
+        return 0
+
+
 # ── Thread helpers ────────────────────────────────────────────────────────────
 
 def get_all_threads() -> list:

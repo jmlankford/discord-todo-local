@@ -1,0 +1,48 @@
+name: Build & Push Web UI to ghcr.io
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "server/discord_api.py"
+      - "server/taskbot.py"
+      - "server/config.py"
+      - "server/state.py"
+      - ".github/workflows/docker-publish-web.yml"
+  workflow_dispatch:   # lets you build from any branch (Actions tab → Run workflow)
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-platform builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .                 # repo root — the web image packages ./server modules
+          file: ./web/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/jmlankford/discord-todo-local-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
