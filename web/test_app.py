@@ -138,6 +138,66 @@ def test_rate_limit():
     check("correct password refused during lockout", r.status_code == 429)
 
 
+def test_client_ip_source():
+    """
+    The lockout key must be the real client, not the proxy.
+
+    Live chain is client -> CF edge -> cloudflared -> NPM -> app. Verified
+    against NPM: the backend receives
+        CF-Connecting-IP: <client>
+        X-Forwarded-For:  <client>, 172.20.0.1     (NPM appends its own peer)
+        X-Real-IP:        172.20.0.1               (the proxy — unusable)
+    so keying on remote_addr / the RIGHTMOST XFF entry buckets every external
+    visitor under 172.20.0.1: the lockout protects nothing and 5 failures from
+    anyone lock out everyone.
+    """
+    print("\n[client ip: real client, not the proxy]")
+    with webapp.app.test_request_context(
+        "/login",
+        headers={"CF-Connecting-IP": "203.0.113.7",
+                 "X-Forwarded-For": "198.51.100.9, 172.20.0.1"},
+        environ_base={"REMOTE_ADDR": "172.20.0.1"},
+    ):
+        check("CF-Connecting-IP wins over XFF and remote_addr",
+              auth.client_ip() == "203.0.113.7")
+
+    with webapp.app.test_request_context(
+        "/login",
+        headers={"X-Forwarded-For": "198.51.100.9, 172.20.0.1"},
+        environ_base={"REMOTE_ADDR": "172.20.0.1"},
+    ):
+        got = auth.client_ip()
+        check("falls back to LEFTMOST XFF entry (the client)", got == "198.51.100.9")
+        check("never returns the appended proxy hop", got != "172.20.0.1")
+
+    with webapp.app.test_request_context(
+        "/login", environ_base={"REMOTE_ADDR": "192.168.1.50"}
+    ):
+        check("falls back to remote_addr with no proxy headers",
+              auth.client_ip() == "192.168.1.50")
+
+    # Two different real clients behind the SAME proxy must not share a bucket.
+    auth._attempts.clear()
+    for _ in range(auth.MAX_FAILS):
+        with webapp.app.test_request_context(
+            "/login", headers={"CF-Connecting-IP": "203.0.113.7"},
+            environ_base={"REMOTE_ADDR": "172.20.0.1"},
+        ):
+            auth.record_failure()
+    with webapp.app.test_request_context(
+        "/login", headers={"CF-Connecting-IP": "203.0.113.7"},
+        environ_base={"REMOTE_ADDR": "172.20.0.1"},
+    ):
+        check("attacker's IP is locked out", auth.lockout_remaining() > 0)
+    with webapp.app.test_request_context(
+        "/login", headers={"CF-Connecting-IP": "198.51.100.22"},
+        environ_base={"REMOTE_ADDR": "172.20.0.1"},
+    ):
+        check("a DIFFERENT client behind the same proxy is NOT locked out",
+              auth.lockout_remaining() == 0)
+    auth._attempts.clear()
+
+
 # ── Numbering parity ──────────────────────────────────────────────────────────
 def _rendered_tasks(html, user):
     """Extract task-text spans for a user's <section>, in document order."""
@@ -265,6 +325,7 @@ if __name__ == "__main__":
     for _t in (
         test_auth,
         test_rate_limit,
+        test_client_ip_source,
         test_numbering_parity,
         test_numbering_parity_with_blocklist,
         test_add,

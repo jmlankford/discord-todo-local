@@ -36,10 +36,36 @@ def _now():
 
 def client_ip():
     """
-    Real client IP. Behind NPM + Cloudflare Tunnel, request.remote_addr is the
-    proxy, so we trust the forwarded chain (ProxyFix is applied in app.py) and
-    fall back to remote_addr.
+    Real client IP, for per-IP lockout keying.
+
+    The chain is: client -> Cloudflare edge -> cloudflared -> NPM -> here.
+    remote_addr is NOT usable: NPM sets X-Forwarded-For with
+    $proxy_add_x_forwarded_for, appending its own peer, so the header arrives as
+    "<real client>, 172.20.0.1". ProxyFix(x_for=1) in app.py takes the RIGHTMOST
+    entry, which is cloudflared (172.20.0.1) for every external request —
+    verified against NPM's access log, where genuine external traffic all shows
+    as [Client 172.20.0.1]. Keying on that pools every visitor under one bucket:
+    the lockout stops protecting anything, and 5 failures from anyone on the
+    internet lock out every user for LOCKOUT_SECONDS.
+
+    Order below is deliberate:
+      1. CF-Connecting-IP — set (and overwritten) by the Cloudflare edge, so a
+         client cannot forge it on traffic that actually came through Cloudflare.
+      2. Leftmost X-Forwarded-For — the original client; later entries are the
+         proxies that appended themselves.
+      3. remote_addr — last resort (direct LAN access, tests).
+
+    Note 2 and 3 are spoofable by anything that can reach NPM directly on the
+    LAN; CF-Connecting-IP is the one to trust for internet-facing traffic.
     """
+    cf = request.headers.get("CF-Connecting-IP")
+    if cf and cf.strip():
+        return cf.strip()
+
+    xff = request.headers.get("X-Forwarded-For")
+    if xff and xff.split(",")[0].strip():
+        return xff.split(",")[0].strip()
+
     return request.remote_addr or "unknown"
 
 
