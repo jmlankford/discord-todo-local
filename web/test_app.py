@@ -441,6 +441,66 @@ def test_web_add_round_trip():
           and not mem["Josh"].get("completed_tasks_blocklist"))
 
 
+def _send_stubs(messages_by_thread, users):
+    """Wire discord + state + sms stubs for handle_send tests. Returns the sms list."""
+    import state as _state
+    metas = [{"id": f"T{u}", "name": u, "parent_id": "C1"} for u in users]
+    discord_api.get_all_threads = lambda: metas
+    discord_api.find_thread = (
+        lambda threads, name, channel_id=None: next((m for m in metas if m["name"] == name), None))
+    discord_api.get_thread_messages = lambda tid: messages_by_thread.get(tid, [])
+    mem = {}
+    _state.load = lambda: mem
+    _state.save = lambda d: mem.update(d)
+    sms = []
+    taskbot.send_sms = lambda to, body: sms.append((to, body))
+    config.USERS = {u: {"phone": f"+1555000{i}"} for i, u in enumerate(users, 1)}
+    return sms
+
+
+def _alerts(sms):
+    return [(to, b) for (to, b) in sms if "ZERO" in b or "⚠️" in b]
+
+
+def test_send_zero_result_alerts():
+    print("\n[digest zero-result alert]")
+    # all three users have threads but NO tasks -> full-run failure signature
+    sms = _send_stubs({"TJosh": [], "TJB": [], "TZach": []}, ["Josh", "JB", "Zach"])
+    taskbot.handle_send()                      # full run
+    a = _alerts(sms)
+    check("zero-for-all sent exactly one alert", len(a) == 1)
+    check("alert went to Josh's phone", bool(a) and a[0][0] == "+15550001")
+    check("alert text names the ZERO failure", bool(a) and "ZERO" in a[0][1])
+
+
+def test_send_nonzero_no_false_alert():
+    print("\n[digest non-zero: no false alert]")
+    sms = _send_stubs({"TJosh": [_msg("900", "real task")]}, ["Josh"])
+    taskbot.handle_send()
+    check("a run WITH tasks raises no zero-alert", _alerts(sms) == [])
+    check("the user still received their list", any("real task" in b for _to, b in sms))
+
+
+def test_send_scoped_zero_exempt():
+    print("\n[digest scoped zero: exempt from alert]")
+    # a single-user (?user=Josh) run with an empty list is a normal manual test,
+    # not the daily-failure signature — it must NOT alert.
+    sms = _send_stubs({"TJosh": []}, ["Josh"])
+    taskbot.handle_send(only_user="Josh")
+    check("scoped single-user zero run does NOT alert", _alerts(sms) == [])
+
+
+def test_send_missing_threads_alerts():
+    print("\n[digest all-threads-missing alert]")
+    # threads not found for anyone (get_all_threads returns none) is also zero-for-all.
+    sms = _send_stubs({}, ["Josh", "JB", "Zach"])
+    discord_api.get_all_threads = lambda: []                 # nothing resolves
+    discord_api.find_thread = lambda threads, name, channel_id=None: None
+    taskbot.handle_send()
+    a = _alerts(sms)
+    check("all-threads-missing also alerts Josh", len(a) == 1 and a[0][0] == "+15550001")
+
+
 if __name__ == "__main__":
     install_stubs()
     # check() raises on failure so pytest can't report a false green. Catch it per
@@ -458,6 +518,10 @@ if __name__ == "__main__":
         test_delete_permission_denied,
         test_delete_multitask_refused,
         test_web_add_round_trip,
+        test_send_zero_result_alerts,
+        test_send_nonzero_no_false_alert,
+        test_send_scoped_zero_exempt,
+        test_send_missing_threads_alerts,
     ):
         try:
             _t()

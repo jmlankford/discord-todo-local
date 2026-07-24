@@ -21,6 +21,7 @@ Scheduling:
   0–120 minute delay — replicating the old Cloud Scheduler + Cloud Tasks flow.
 """
 
+import logging
 import random
 import threading
 from datetime import datetime
@@ -36,8 +37,39 @@ import config
 import taskbot
 import voice
 
+# Make INFO-level activity visible in `docker logs`. Flask's app.logger otherwise
+# sits at WARNING (debug off), which silently swallowed all [scheduler]/[send]
+# lines — so a stuck scheduler looked identical to a healthy one. basicConfig sets
+# a root StreamHandler so app.logger AND the taskbot module logger both surface.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logging.getLogger("apscheduler").setLevel(logging.INFO)
+
 app = Flask(__name__)
+app.logger.setLevel(logging.INFO)
 ET  = pytz.timezone("America/New_York")
+
+
+def _run_send_safely(only_user=None):
+    """
+    Run handle_send in a context where an exception won't vanish. The send runs
+    in a detached Thread/Timer, so an unhandled error would otherwise disappear
+    with no log and no SMS — exactly how a failure could go unnoticed. Here it is
+    logged at ERROR and Josh is alerted.
+    """
+    try:
+        taskbot.handle_send(only_user)
+    except Exception:
+        app.logger.exception("[send] handle_send crashed")
+        try:
+            taskbot.alert_josh(
+                "⚠️ TaskBot: the daily send CRASHED with an error before "
+                "completing. Check the container logs."
+            )
+        except Exception:
+            app.logger.exception("[send] could not send crash alert")
 
 
 # ── Twilio signature validation ───────────────────────────────────────────────
@@ -67,7 +99,7 @@ def route_send():
     Use this to test without waiting for the scheduled time.
     """
     only_user = request.args.get("user")
-    threading.Thread(target=taskbot.handle_send, args=(only_user,), daemon=True).start()
+    threading.Thread(target=_run_send_safely, args=(only_user,), daemon=True).start()
     return jsonify({"status": "send started", "user": only_user or "all"}), 200
 
 
@@ -83,7 +115,7 @@ def route_trigger():
         f"[trigger] Sending in {delay // 60}m {delay % 60}s "
         f"(~{eta.strftime('%I:%M %p ET')})"
     )
-    threading.Timer(delay, taskbot.handle_send).start()
+    threading.Timer(delay, _run_send_safely).start()
     return jsonify({"status": "scheduled", "delay_seconds": delay}), 200
 
 
@@ -190,7 +222,7 @@ def _scheduled_trigger():
         f"[scheduler] Daily trigger fired. Sending in {delay // 60}m {delay % 60}s "
         f"(~{eta.strftime('%I:%M %p ET')})"
     )
-    threading.Timer(delay, taskbot.handle_send).start()
+    threading.Timer(delay, _run_send_safely).start()
 
 
 def start_scheduler():

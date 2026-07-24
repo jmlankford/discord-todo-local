@@ -5,6 +5,7 @@ Replaces the Cloud Function endpoints /send and /reply.
 State is stored in a local JSON file (see state.py) instead of Google Cloud Storage.
 """
 
+import logging
 import pytz
 from datetime import datetime
 from twilio.rest import Client
@@ -14,12 +15,30 @@ import state
 import discord_api as discord
 
 ET = pytz.timezone("America/New_York")
+log = logging.getLogger("taskbot")
 
 
 # ── SMS ───────────────────────────────────────────────────────────────────────
 
 def _twilio_client():
     return Client(config.TWILIO_SID, config.TWILIO_AUTH)
+
+
+def alert_josh(message: str) -> None:
+    """
+    Send an OPERATIONAL alert SMS to Josh (not a task list). Best-effort and
+    independent of Discord, so it still reaches him when the Discord read is the
+    thing that failed. Logs at WARNING either way so the alert is visible in logs.
+    """
+    phone = config.USERS.get("Josh", {}).get("phone", "")
+    if not phone:
+        log.warning("[alert] No phone configured for Josh; cannot alert: %s", message)
+        return
+    try:
+        send_sms(phone, message)
+        log.warning("[alert] Alerted Josh: %s", message)
+    except Exception:
+        log.exception("[alert] Failed to send alert SMS to Josh")
 
 
 def send_sms(to: str, body: str) -> None:
@@ -144,9 +163,12 @@ def handle_send(only_user: str = None) -> None:
     Pass only_user to limit to a single user (useful for testing).
     Called directly by the scheduler — not over HTTP.
     """
-    print(f"[send] Starting{f' (only: {only_user})' if only_user else ''}...")
+    log.info("[send] Starting%s", f" (only: {only_user})" if only_user else "")
     threads = discord.get_all_threads()
     current_state = state.load()
+
+    candidates = 0        # users eligible to receive a list (phone configured)
+    total_tasks = 0
 
     for username, user_info in config.USERS.items():
         if only_user and username.lower() != only_user.lower():
@@ -154,17 +176,20 @@ def handle_send(only_user: str = None) -> None:
 
         phone = user_info.get("phone", "")
         if not phone:
-            print(f"  [skip] No phone configured for {username}")
+            log.info("[send] [skip] No phone configured for %s", username)
             continue
 
-        print(f"[send] Processing {username}...")
+        candidates += 1
+        log.info("[send] Processing %s...", username)
         tasks, thread_id, task_message_ids, message_task_count = get_tasks_for_user(
             username, threads
         )
 
         if thread_id is None:
-            print(f"  Skipping {username} — no thread found.")
+            log.warning("[send] Skipping %s — no thread found.", username)
             continue
+
+        total_tasks += len(tasks)
 
         numbered = {str(i + 1): task for i, task in enumerate(tasks)}
         current_state[username] = {
@@ -179,10 +204,26 @@ def handle_send(only_user: str = None) -> None:
         }
 
         send_sms(phone, format_task_list(username, tasks))
-        print(f"  ✓ Sent {len(tasks)} task(s) to {username}")
+        log.info("[send] ✓ Sent %d task(s) to %s", len(tasks), username)
+
+    # Zero tasks for EVERYONE on a full run is the signature of a broken Discord
+    # read (this stack was silently dead for a week that way). Treat it as a
+    # failure: shout at WARNING and alert Josh, rather than reporting Done as if
+    # all was well. Scoped test runs (only_user set) are exempt — one empty user
+    # is normal.
+    if only_user is None and candidates > 0 and total_tasks == 0:
+        log.warning(
+            "[send] ZERO tasks for ALL %d user(s) — Discord read is likely "
+            "failing (threads empty or missing). Alerting Josh.", candidates,
+        )
+        alert_josh(
+            f"⚠️ TaskBot: daily send found ZERO tasks for everyone "
+            f"({candidates} users). Discord read may be broken — check the bot."
+        )
 
     state.save(current_state)
-    print("[send] Done.")
+    log.info("[send] Done. %d candidate user(s), %d task(s) total.",
+             candidates, total_tasks)
 
 
 # ── Reply handler ─────────────────────────────────────────────────────────────
