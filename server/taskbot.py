@@ -51,6 +51,20 @@ def send_sms(to: str, body: str) -> None:
 
 # ── Task list helpers ─────────────────────────────────────────────────────────
 
+# Web-added tasks are posted BY THE BOT (the web UI has no human identity), but
+# get_tasks_for_user otherwise ignores all bot output. The web UI prepends this
+# sentinel so the reader can tell a web-added task apart from ordinary bot chatter
+# (completion notices etc.) and accept it while still ignoring everything else.
+#
+# Safe because detection is gated on author.bot == True: a human who happens to
+# type this emoji is handled by the unchanged human path, never the sentinel path.
+# The only other bot output to a user's thread is the "✅ … completed: …" notice,
+# which starts with ✅ (U+2705), not 🔖 (U+1F516). The marker is stripped before
+# display so it never reaches the web UI or the SMS text.
+WEB_TASK_SENTINEL = "🔖"           # detection marker (leading char of a web task)
+WEB_TASK_PREFIX = WEB_TASK_SENTINEL + " "   # what the web UI actually prepends
+
+
 def get_tasks_for_user(username: str, threads: list):
     """
     Read a user's Discord thread and return deduplicated tasks.
@@ -77,9 +91,15 @@ def get_tasks_for_user(username: str, threads: list):
     blocklist = set(existing_state.get(username, {}).get("completed_tasks_blocklist", []))
 
     for msg in reversed(messages):
-        if msg.get("author", {}).get("bot", False):
-            continue
         content = msg.get("content", "").strip()
+        if msg.get("author", {}).get("bot", False):
+            # Ignore bot output EXCEPT web-added tasks, which carry the sentinel.
+            # Strip the marker and fall through to the exact same per-line
+            # handling as a human message — ordering, dedup and blocklist logic
+            # below are untouched.
+            if not content.startswith(WEB_TASK_SENTINEL):
+                continue
+            content = content[len(WEB_TASK_SENTINEL):].strip()
         if not content:
             continue
 

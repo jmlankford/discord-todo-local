@@ -142,7 +142,10 @@ def add_task():
         return redirect(url_for("index"))
 
     try:
-        discord.send_message(thread["id"], text)
+        # Posted BY THE BOT with the web-task sentinel so get_tasks_for_user will
+        # surface it (it ignores unmarked bot messages). The marker is stripped
+        # for display, so the list, the SMS digest and delete all see just `text`.
+        discord.send_message(thread["id"], taskbot.WEB_TASK_PREFIX + text)
         flash(f"Added to {user}: “{text}”", "ok")
     except Exception as e:
         flash(f"Could not add task: {e}", "error")

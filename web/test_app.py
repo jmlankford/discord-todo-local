@@ -28,7 +28,17 @@ import discord_api            # noqa: E402
 import state                  # noqa: E402
 import taskbot                # noqa: E402
 import auth                   # noqa: E402
+import config                 # noqa: E402
 import app as webapp          # noqa: E402
+
+# The server prints status lines containing ✓/✅ etc. On a Windows console
+# (cp1252) those crash the run; the app itself runs in a UTF-8 Linux container.
+# Make the harness encoding-safe so it passes on any platform.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 PASS, FAIL = 0, 0
 
@@ -269,7 +279,10 @@ def test_add():
     r = c.post("/add", data={"user": "Josh", "text": "Water plants"}, follow_redirects=False)
     check("add redirects back", r.status_code == 302)
     check("add posts to Josh's thread", sent.get("tid") == "TJosh")
-    check("add posts the exact text", sent.get("content") == "Water plants")
+    # Posted as the bot with the web-task sentinel prepended (so the reader will
+    # surface it); the marker is stripped for display elsewhere.
+    check("add posts the text with the web-task sentinel",
+          sent.get("content") == taskbot.WEB_TASK_PREFIX + "Water plants")
 
     sent.clear()
     r = c.post("/add", data={"user": "Nobody", "text": "x"})
@@ -316,6 +329,101 @@ def test_delete_multitask_refused():
     THREADS["JB"] = [_msg("200", "Ship invoice")]  # restore
 
 
+def test_web_add_round_trip():
+    """
+    Full lifecycle of a web-added task against a MUTABLE fake Discord, exercising
+    the real code paths end to end:
+      web /add  ->  shows in list  ->  shows in SMS digest w/ right number
+                ->  completable by SMS reply  ->  and deletable in the UI
+    Regression guard for the sentinel bug (web-added bot messages were invisible).
+    """
+    print("\n[web-add sentinel round-trip]")
+    import state as _state
+
+    # ── mutable in-memory Discord backend ─────────────────────────────────────
+    store = {"TJosh": [], "TJB": [], "TZach": []}   # oldest-first internally
+    seq = {"n": 1000}
+    def _threads():
+        return list(THREAD_META.values())
+    def _find(threads, name, channel_id=None):
+        return THREAD_META.get(name)
+    def _get_msgs(thread_id):
+        return list(reversed(store.get(thread_id, [])))   # Discord returns newest-first
+    def _send(thread_id, content):
+        seq["n"] += 1
+        mid = str(seq["n"])
+        store.setdefault(thread_id, []).append(
+            {"id": mid, "content": content, "author": {"bot": True}})
+        return {"id": mid}
+    def _del(cid, mid):
+        n0 = len(store.get(cid, []))
+        store[cid] = [m for m in store.get(cid, []) if m["id"] != mid]
+        return 204 if len(store[cid]) < n0 else 404
+    for mod in (discord_api,):
+        mod.get_all_threads = _threads
+        mod.find_thread = _find
+        mod.get_thread_messages = _get_msgs
+        mod.send_message = _send
+        mod.delete_message_checked = _del
+        mod.discord_delete = lambda cid, mid: _del(cid, mid)      # SMS-completion path
+        mod.find_or_create_thread = lambda threads, name, channel_id=None: "TJoshDone"
+
+    # in-memory state + captured SMS, so handle_send/handle_reply need no disk/Twilio
+    mem = {}
+    _state.load = lambda: mem
+    _state.save = lambda d: mem.update(d)
+    sms = []
+    taskbot.send_sms = lambda to, body: sms.append(body)
+
+    # single test user with a phone so the SMS reply flow resolves
+    config.USERS = {"Josh": {"phone": "+15550001"}}
+    config.PHONE_TO_USER = {"+15550001": "Josh"}
+    webapp.USER_NAMES = ["Josh"]
+
+    # seed one HUMAN task so we can prove the web task numbers AFTER it (order)
+    store["TJosh"].append({"id": "500", "content": "Wash car", "author": {"bot": False}})
+
+    c = _authed_client()
+
+    # 1) ADD via the web path
+    c.post("/add", data={"user": "Josh", "text": "Paint fence"}, follow_redirects=False)
+    raw = store["TJosh"][-1]
+    check("add posted a BOT message carrying the sentinel",
+          raw["author"]["bot"] and raw["content"] == taskbot.WEB_TASK_PREFIX + "Paint fence")
+
+    # 2) shows in the task list (marker stripped), AFTER the human task
+    tasks, _tid, tmids, tcount = taskbot.get_tasks_for_user("Josh", _threads())
+    check("web task appears in the list, marker stripped", tasks == ["Wash car", "Paint fence"])
+    check("its Discord id maps to the bot message", tmids.get("Paint fence") == [raw["id"]])
+    check("it counts as a single-task message (SMS-completable, not blocklisted)",
+          tcount.get(raw["id"]) == 1)
+
+    # 3) renders on the page with no marker
+    html = c.get("/").get_data(as_text=True)
+    check("rendered on the page as clean text", "Paint fence" in html and "🔖" not in html)
+
+    # 4) appears in the SMS digest with correct numbering, no marker
+    digest = taskbot.format_task_list("Josh", tasks)
+    check("digest numbers it correctly (2. Paint fence)", "2. Paint fence" in digest)
+    check("digest text carries no marker", "🔖" not in digest)
+
+    # 5) COMPLETABLE BY SMS: send (saves state), then reply with its number
+    taskbot.handle_send(only_user="Josh")
+    num = next(n for n, t in mem["Josh"]["numbered"].items() if t == "Paint fence")
+    taskbot.handle_reply("+15550001", num)
+    left, *_ = taskbot.get_tasks_for_user("Josh", _threads())
+    check("SMS reply completed the web task (removed from Discord)", "Paint fence" not in left)
+    check("the human task is untouched by that completion", "Wash car" in left)
+
+    # 6) DELETABLE IN THE UI: add another, delete it via /delete
+    c.post("/add", data={"user": "Josh", "text": "Sweep porch"}, follow_redirects=False)
+    check("second web task present before delete",
+          "Sweep porch" in taskbot.get_tasks_for_user("Josh", _threads())[0])
+    c.post("/delete", data={"user": "Josh", "text": "Sweep porch"}, follow_redirects=False)
+    check("UI delete removed the web task from Discord",
+          "Sweep porch" not in taskbot.get_tasks_for_user("Josh", _threads())[0])
+
+
 if __name__ == "__main__":
     install_stubs()
     # check() raises on failure so pytest can't report a false green. Catch it per
@@ -332,6 +440,7 @@ if __name__ == "__main__":
         test_delete_single,
         test_delete_permission_denied,
         test_delete_multitask_refused,
+        test_web_add_round_trip,
     ):
         try:
             _t()
