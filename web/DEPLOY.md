@@ -1,10 +1,39 @@
 # TaskBot Web UI — Deploy Runbook
 
-Hostname: **tasks.lankamerica.com** · Container: **taskbot-web** · Host port **8091** → container 8080
+Hostname: **tasks.thebloomandrose.com** · Container: **taskbot-web** · **No published host port**
 Stack: existing **taskbot** stack (Portainer 217) · Image: `ghcr.io/jmlankford/discord-todo-local-web:latest`
 
 Everything below runs on **your** side (LAN / Cloudflare / Portainer). The image is
 published by the repo's Actions (`Build & Push Web UI to ghcr.io`).
+
+## Networking model — no published host port
+
+`taskbot-web` publishes **nothing** on the Unraid host interface. NPM reaches it by
+**container name** over the `nginx_default` network:
+
+```
+Cloudflare Tunnel → NPM (nginx_default) → taskbot-web:8080
+                                              │
+                                              └→ taskbot:8080  (taskbot_default)
+```
+
+An earlier draft of this runbook mapped host port **8091**. That was wrong — **8091
+is not free**, it belongs to `zwave2mqtt-zwavejs2mqtt-1`. Rather than hunt for
+another free port on a host where 8080, 8081, 8090, 8091, 35080/35443, 5055, 6380,
+8410, 9980 and 9000 are all bound, forwarding by container name removes the
+conflict class entirely.
+
+Precedent: NPM already forwards `office.lankamerica.com` to `collabora:9980` by name.
+Verified live — `docker exec npm getent hosts nextcloud-app` resolves on NPM's subnet.
+
+`taskbot-web` joins **two** networks:
+
+| Network | Why |
+|---|---|
+| `default` (`taskbot_default`) | So it can resolve and call `taskbot:8080` |
+| `nginx_default` | So NPM can resolve `taskbot-web` |
+
+`nginx_default` is `external: true` — owned by the NPM stack, only joined here.
 
 ---
 
@@ -22,8 +51,7 @@ Add two web-only secrets in the stack's **Environment variables** section:
     image: ghcr.io/jmlankford/discord-todo-local-web:latest
     container_name: taskbot-web
     restart: unless-stopped
-    ports:
-      - "8091:8080"
+    # no ports: — nothing published on the host
     volumes:
       - /mnt/user/appdata/taskbot/data:/data:ro   # read-only; matches digest numbering
     environment:
@@ -35,6 +63,13 @@ Add two web-only secrets in the stack's **Environment variables** section:
       PORT: "8080"
       STATE_FILE: "/data/task_state.json"
       TZ: "America/New_York"
+    networks:
+      - default
+      - nginx_default
+
+networks:
+  nginx_default:
+    external: true
 ```
 
 `${VAR}` inherits from the stack env, so no secret is duplicated. Deploy the stack
@@ -47,10 +82,14 @@ Add two web-only secrets in the stack's **Environment variables** section:
 
 ## 2. NPM proxy host
 
-- Domain: `tasks.lankamerica.com`
-- Scheme: `http` · Forward host: `taskbot-web` (if NPM shares the stack network) or the Unraid IP · Forward port: `8080` (container-name route) or `8091` (host-IP route)
+- Domain: `tasks.thebloomandrose.com`
+- Scheme: `http` · **Forward host: `taskbot-web`** · **Forward port: `8080`**
 - Block Common Exploits: on · Websockets: not required
 - **SSL** → request a new Let's Encrypt cert **via DNS-01** (HTTP-01 is retired here); Force SSL on
+
+> Forward Hostname is the **container name**, not an IP and not the Unraid host.
+> Forward Port is the port *inside* the container. Do not enter `192.168.1.165` —
+> the point of this design is that nothing is published on the host.
 
 ## 3. Cloudflare DNS
 
@@ -62,11 +101,11 @@ Add a rule **above** the catch-all. `originServerName` is mandatory — without 
 NPM's TLS handshake 502s (this bit us before):
 
 ```yaml
-  - hostname: tasks.lankamerica.com
+  - hostname: tasks.thebloomandrose.com
     service: https://192.168.1.165:35443
     originRequest:
       noTLSVerify: true
-      originServerName: tasks.lankamerica.com
+      originServerName: tasks.thebloomandrose.com
 ```
 
 ---
@@ -89,7 +128,29 @@ Manage Messages is a Discord change only Josh can make.
 
 ## 6. Verify (checklist)
 
-- [ ] `https://tasks.lankamerica.com` loads over HTTPS through the tunnel
+**Routing** — each command isolates one hop, so a failure tells you which link broke:
+
+```bash
+# a. Which network is NPM actually on? (don't assume it's still nginx_default)
+docker inspect npm --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{println}}{{end}}'
+
+# b. Did taskbot-web join that same network? Both names must appear.
+docker network inspect nginx_default --format '{{range .Containers}}{{.Name}} {{end}}'
+
+# c. Can NPM resolve it by name? Expect an IP on 172.20.0.0/16.
+docker exec npm getent hosts taskbot-web
+
+# d. Can NPM actually reach the app?
+docker exec npm curl -sS -o /dev/null -w '%{http_code}\n' http://taskbot-web:8080/
+
+# e. Nothing new listening on the host — the whole point. taskbot-web must show
+#    NO 0.0.0.0: mapping. taskbot still shows 0.0.0.0:8090->8080/tcp (unchanged).
+docker ps --format '{{.Names}}\t{{.Ports}}' | grep taskbot
+```
+
+**Application:**
+
+- [ ] `https://tasks.thebloomandrose.com` loads over HTTPS through the tunnel
 - [ ] Wrong password rejected; correct admits; session survives a reload
 - [ ] All three lists show and match the SMS digest content **and order**
 - [ ] Add a task for each user → lands in the correct Discord thread

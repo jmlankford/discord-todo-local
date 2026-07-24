@@ -135,6 +135,25 @@ If you're using Nginx Proxy Manager on Unraid:
 
 Make sure your router forwards port 443 to your Unraid box, and that your DNS (Cloudflare or registrar) has an A record for `switchboard` pointing to your public IP.
 
+The steps above cover the **`taskbot` API** service only.
+
+### Web UI (`taskbot-web`)
+
+A second container in the same stack serves a mobile-friendly page for viewing, adding,
+and deleting tasks. Discord threads stay the source of truth — it reuses
+`server/taskbot.get_tasks_for_user` verbatim, so its numbering matches the daily SMS
+digest exactly rather than reimplementing the ordering.
+
+It publishes **no host port at all**. NPM forwards to it by container name
+(`taskbot-web:8080`) over the shared `nginx_default` network, so nothing new listens on
+the Unraid interface and no host port can conflict.
+
+Proxy host, Cloudflare tunnel ingress (including the required `originServerName`), the
+Discord **Manage Messages** precheck, and the full verification checklist are in
+**[`web/DEPLOY.md`](web/DEPLOY.md)**. Public hostname: `https://tasks.thebloomandrose.com`.
+
+Run its self-tests with `python web/test_app.py` (26 checks, no live Discord/Twilio needed).
+
 ---
 
 ## Credentials Reference
@@ -171,6 +190,16 @@ discord-todo-local/
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── .env.example            ← Template — do not commit filled-in version
+├── web/                        ← Web UI container source (taskbot-web)
+│   ├── app.py                  ← Flask routes: list, add, delete
+│   ├── auth.py                 ← Shared-password login, lockout, session cookie
+│   ├── templates/              ← index.html, login.html
+│   ├── static/style.css
+│   ├── check_permissions.py    ← Reports whether delete will work (Manage Messages)
+│   ├── test_app.py             ← 26 self-tests — `python web/test_app.py`
+│   ├── DEPLOY.md               ← Proxy host, tunnel ingress, verification
+│   ├── requirements.txt
+│   └── Dockerfile
 ├── docker-compose.yml          ← Fill in your credentials here
 ├── .gitignore
 └── README.md

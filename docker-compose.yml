@@ -2,6 +2,12 @@ version: "3.8"
 
 services:
   taskbot:
+    # Deployment note: the live Unraid stack pins this to a digest
+    # (…@sha256:5ac028bf…) rather than :latest, so redeploying the stack to change
+    # another service can't silently move the running taskbot onto a freshly built
+    # image. Deps here are unpinned `>=` on a floating base, so a rebuild is not
+    # byte-reproducible. Keep :latest here — this file is a template — but pin the
+    # digest in any stack you actually care about. See web/DEPLOY.md.
     image: ghcr.io/jmlankford/discord-todo-local:latest
     container_name: taskbot
     restart: unless-stopped
@@ -42,15 +48,18 @@ services:
       MFA_CODE_FILE: "/data/wave_mfa_code.txt"
       TZ: "America/New_York"
 
-  # ── Web UI for managing the task lists (tasks.lankamerica.com) ───────────────
+  # ── Web UI for managing the task lists (tasks.thebloomandrose.com) ───────────
   # Separate container, same stack. Reuses the same Discord credentials.
   # Reads /data read-only so its task numbering matches the digest's blocklist.
   taskbot-web:
     image: ghcr.io/jmlankford/discord-todo-local-web:latest
-    container_name: taskbot-web
+    container_name: taskbot-web          # NPM forwards to this exact name
     restart: unless-stopped
-    ports:
-      - "8091:8080"          # 8080/8081 = lank-survey-ape, 8090 = taskbot; 8091 is free
+
+    # NOTE: deliberately no `ports:` mapping. 8091 is NOT free — it belongs to
+    # zwave2mqtt. Rather than hunt for another free port, NPM reaches this
+    # container by name over the nginx_default network (see web/DEPLOY.md), so
+    # nothing is published on the Unraid host interface and no port can conflict.
     volumes:
       - /mnt/user/appdata/taskbot/data:/data:ro   # read-only: web never writes state
     environment:
@@ -61,6 +70,15 @@ services:
       # Web-only secrets — set these in the Portainer stack env, not in the repo.
       APP_PASSWORD: "SET_IN_PORTAINER_ENV"        # shared login password
       SESSION_SECRET: "SET_IN_PORTAINER_ENV"      # random, e.g. `openssl rand -hex 32`
-      PORT: "8080"
+      PORT: "8080"                                # container-internal only
       STATE_FILE: "/data/task_state.json"
       TZ: "America/New_York"
+
+    networks:
+      - default          # taskbot_default — so it can resolve `taskbot`
+      - nginx_default    # NPM's network — so NPM can resolve `taskbot-web`
+
+networks:
+  # Created by the Nginx Proxy Manager stack; joined here, never managed here.
+  nginx_default:
+    external: true

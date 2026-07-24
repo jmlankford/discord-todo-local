@@ -41,6 +41,11 @@ def check(name, cond):
     else:
         FAIL += 1
         print(f"  FAIL  {name}")
+        # Must raise, not just tally. Without this, a failing check still lets its
+        # enclosing test function return normally, so `pytest test_app.py` reports
+        # every function green no matter what failed. The __main__ runner below
+        # still reports the full tally because it catches this per function.
+        raise AssertionError(name)
 
 
 # ── Synthetic Discord data ────────────────────────────────────────────────────
@@ -253,13 +258,23 @@ def test_delete_multitask_refused():
 
 if __name__ == "__main__":
     install_stubs()
-    test_auth()
-    test_rate_limit()
-    test_numbering_parity()
-    test_numbering_parity_with_blocklist()
-    test_add()
-    test_delete_single()
-    test_delete_permission_denied()
-    test_delete_multitask_refused()
+    # check() raises on failure so pytest can't report a false green. Catch it per
+    # function here so one failure doesn't abort the rest of the run — we still want
+    # the full tally. Anything other than AssertionError is a real bug in the test
+    # setup, so let it propagate.
+    for _t in (
+        test_auth,
+        test_rate_limit,
+        test_numbering_parity,
+        test_numbering_parity_with_blocklist,
+        test_add,
+        test_delete_single,
+        test_delete_permission_denied,
+        test_delete_multitask_refused,
+    ):
+        try:
+            _t()
+        except AssertionError:
+            print(f"  ...{_t.__name__} aborted at first failed check")
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
