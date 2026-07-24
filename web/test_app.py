@@ -423,6 +423,23 @@ def test_web_add_round_trip():
     check("UI delete removed the web task from Discord",
           "Sweep porch" not in taskbot.get_tasks_for_user("Josh", _threads())[0])
 
+    # 7) a MULTI-LINE submission must collapse to ONE task (count == 1), so SMS
+    #    completion stays on the delete-by-id path, not the untested blocklist one.
+    c.post("/add", data={"user": "Josh", "text": "mow lawn\nand rake\nleaves"},
+           follow_redirects=False)
+    raw2 = store["TJosh"][-1]
+    tasks2, _t2, tmids2, tcount2 = taskbot.get_tasks_for_user("Josh", _threads())
+    check("newlines collapsed to a single task", "mow lawn and rake leaves" in tasks2)
+    check("single-line submission => one message, one task (count == 1)",
+          tcount2.get(raw2["id"]) == 1)
+    # and it completes by delete-by-id, not blocklist
+    taskbot.handle_send(only_user="Josh")
+    n2 = next(n for n, t in mem["Josh"]["numbered"].items() if t == "mow lawn and rake leaves")
+    taskbot.handle_reply("+15550001", n2)
+    check("multi-line-collapsed task completes by SMS (removed, not blocklisted)",
+          "mow lawn and rake leaves" not in taskbot.get_tasks_for_user("Josh", _threads())[0]
+          and not mem["Josh"].get("completed_tasks_blocklist"))
+
 
 if __name__ == "__main__":
     install_stubs()

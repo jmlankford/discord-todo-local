@@ -126,7 +126,11 @@ def index():
 @app.route("/add", methods=["POST"])
 def add_task():
     user = request.form.get("user", "")
-    text = (request.form.get("text", "") or "").strip()
+    # Collapse ALL whitespace (incl. newlines) to single spaces. A newline would
+    # make one bot message carry two tasks (message_task_count == 2), which pushes
+    # SMS completion onto the blocklist branch instead of delete-by-id. Keeping a
+    # web add to exactly one line guarantees count == 1 and the tested delete path.
+    text = " ".join((request.form.get("text", "") or "").split())
 
     if user not in config.USERS:
         flash("Unknown user.", "error")
